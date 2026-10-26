@@ -1,81 +1,164 @@
-#include <chrono>
+#include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <exception>
+#include <format>
+#include <initializer_list>
 #include <iostream>
 #include <map>
+#include <mutex>
+#include <ostream>
 #include <print>
 #include <random>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
-struct Stopwatch {
-private:
-  std::chrono::steady_clock::time_point start;
+enum flag_t {
+  flag0 = 0,
+  flag1 = 1,
+  flag2 = 2,
+};
 
-public:
-  Stopwatch() : start(std::chrono::steady_clock::now()) {}
-  ~Stopwatch() {
-    auto duration = std::chrono::steady_clock::now() - start;
-    std::println("Duration: {}", duration);
-  }
+struct MyConfig {
+  int magicnum;
+  flag_t flag;
 };
 
 template <typename T>
-  requires std::is_arithmetic_v<T> and std::is_trivially_copyable_v<T>
-void print_distribution(const std::map<T, T> &dist) {
-  for (const auto &[k, v] : dist) {
-    std::println("{0:3}: {1}", k, std::string(v / 1, '*'));
+  requires requires(T t) {
+    { t } -> std::convertible_to<int>;
   }
+void foo(T &t) {
+  t = 2;
 }
 
-struct TestItem {
-  bool state;
+template <typename T>
+  requires(std::is_integral_v<T>)
+void f1(T &t) {
+  t = 1;
+}
 
-  TestItem(bool setstate) : state(setstate) {}
+template <typename T, typename U> std::pair<T, U> combine(T left, U right) noexcept { return std::pair{left, right}; }
 
-  explicit operator bool() { return state; }
+template <typename T> struct remove_reference2 {
+  using type = T;
 };
 
-struct Base {
-  Base() = default;
-  void do_something() { std::cout << "Base is doing something\n"; }
-  // deny copy
-  Base(const Base &other) = delete;
-  Base &operator=(const Base &other) = delete;
-  // deny move
-  Base(Base &&other) noexcept = delete;
-  Base &operator=(Base &&other) noexcept = delete;
+template <typename T> struct remove_reference2<T &&> {
+  using type = T;
 };
 
-struct Derived final : public Base {
-  int value;
-  Derived(int v) : value(v) {}
+template <typename T> struct remove_reference2<T &> {
+  using type = T;
 };
 
-int main() {
-  auto rd = std::random_device();
-  auto generator = std::mt19937(rd());
-  auto dice = std::uniform_int_distribution(1, 20);
+// First define our non-specialized class template
+template <typename T> class Storage8 {
+private:
+  T m_array[8];
 
-  constexpr int num_rolls = 1000;
-  auto roll_distribution = std::map<int, int>{};
+public:
+  void set(int index, const T &value) { m_array[index] = value; }
 
-  auto b = Base();
-  auto d = Derived(0);
-  auto d1 = Derived(1);
-  d1 = d;      // implicitly-deleted copy assignment
-  auto d2 = d; // implicitly-deleted copy constructor of 'Derived'
-  
-  d1 = std::move(d);
-  auto d3 = std::move(d);
+  const T &get(int index) const { return m_array[index]; }
+};
 
-  std::println("{}", sizeof(b));
-  std::println("{}", sizeof(d));
+// Now define our specialized class template
+template <>            // the following is a template class with no templated parameters
+class Storage8<double> // we're specializing Storage8 for bool
+{
+  // What follows is just standard class implementation details
 
-  for (size_t _{}; _ < num_rolls; ++_) {
-    roll_distribution[dice(generator)]++;
+private:
+  std::uint8_t m_data{};
+
+public:
+  // Don't worry about the details of the implementation of these functions
+  void set(int index, bool value) {
+    // Figure out which bit we're setting/unsetting
+    // This will put a 1 in the bit we're interested in turning on/off
+    auto mask{1 << index};
+
+    if (value)         // If we're setting a bit
+      m_data |= mask;  // use bitwise-or to turn that bit on
+    else               // if we're turning a bit off
+      m_data &= ~mask; // bitwise-and the inverse mask to turn that bit off
   }
 
-  std::println("{}", 777);
+  bool get(int index) {
+    // Figure out which bit we're getting
+    auto mask{1 << index};
+    // bitwise-and to get the value of the bit we're interested in
+    // Then implicit cast to boolean
+    return (m_data & mask);
+  }
+};
+template <typename T> class B {
+public:
+  void f() {} // Member of class B<T>
+};
+template <typename T> class D : public B<T> {
+public:
+  void g() {
+    f(); // Bad (even though some compilers erroneously (temporarily?) accept it)
+  }
+};
 
-  print_distribution(roll_distribution);
+// Same example as before
+int main2() {
+  // Define a Storage8 for integers (instantiates Storage8<T>, where T = int)
+  Storage8<int> intStorage;
+
+  for (int count{0}; count < 8; ++count) {
+    intStorage.set(count, count);
+  }
+
+  for (int count{0}; count < 8; ++count) {
+    std::cout << intStorage.get(count) << '\n';
+  }
+
+  // Define a Storage8 for bool  (instantiates Storage8<bool> specialization)
+  Storage8<bool> boolStorage;
+
+  for (int count{0}; count < 8; ++count) {
+    boolStorage.set(count, count & 3);
+  }
+
+  std::cout << std::boolalpha;
+
+  for (int count{0}; count < 8; ++count) {
+    std::cout << boolStorage.get(count) << '\n';
+  }
+
+  return 0;
+}
+
+int main() {
+  namespace rg = std::ranges;
+  std::vector numbers = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  std::vector indices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  // std::vector arrows = {↕, ↕, ↕, ↕, ↕, ↕, ↕, ↕, ↕, ↕};
+  std::vector arrows(10, std::string{"\u2195"});
+  std::string formatted_arrows = std::format("{}", arrows);
+  std::erase(formatted_arrows, '"');
+
+  std::println("Shuffling numbers: {}", numbers);
+  std::random_device rd;
+  auto g = std::mt19937(rd());
+  rg::shuffle(numbers, g);
+  std::println("Shuffled List with indices: \n{}\n{}\n{}", numbers, formatted_arrows, indices);
+
+  std::println("Trying to keep index parity after sorting numbers");
+
+  rg::sort(indices, std::less{}, [&numbers](int n) { return numbers[n]; });
+  rg::sort(numbers);
+  std::println("After sort attempt: \n{}\n{}\n{}", numbers, formatted_arrows, indices);
+
+  std::vector<std::vector<int>> triplets{};
+  triplets.emplace_back(std::initializer_list<int>{1,2,3});
+  std::println("{}", triplets);
 }
